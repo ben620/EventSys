@@ -10,13 +10,12 @@
 enum class EventID
 {
     NewJob,
+    OnVoid,
     Max
 };
 
-class ObjectBase
-{
-    
-};
+class ObjectBase;
+
 
 class EventBase
 {
@@ -26,22 +25,30 @@ public:
     {
         return nullptr;
     }
+    virtual std::size_t Size() const
+    {
+        return 0;
+    }
 };
 
 template <typename... Args>
 class TEvent : public EventBase
 {
 public:
-    TEvent() = default;
-    TEvent(Args... args)
+    TEvent(Args... args) noexcept
         : value(std::forward<Args>(args)...)
     {
-        std::cout << 1 << typeid(value).name() << std::endl;
     }
     
-    const void* Data() const
+    const void* Data() const override
     {
         return &value;
+    }
+
+
+    std::size_t Size() const override
+    {
+        return sizeof(value);
     }
 
     using TupleType = std::tuple<Args...>;
@@ -50,25 +57,18 @@ private:
     TupleType value;
 };
 
-template <typename C, typename... Args>
-auto MakeCallBack(ObjectBase *obj, void (C::*f)(Args...))
-{
-    using FnType = void (C::*)(Args... args);
-    return [f = std::forward<FnType>(f), obj](const EventBase &e)
-        {
-            using TupleType = typename TEvent<Args...>::TupleType;
-            const TupleType* eventBody = reinterpret_cast<const TupleType*>(e.Data());
-            std::cout << 2 << typeid(eventBody).name() << std::endl;
-            std::apply(std::bind_front(f, static_cast<C*>(obj)), *eventBody);
-        };
-}
 
 
 class EventSystem
 {
 public:
+    static EventSystem& Inst()
+    {
+        static EventSystem es;
+        return es;
+    }
     template <typename ...Args>
-    void Send(EventID evtID, ObjectBase* sender, Args... args)
+    void Send(EventID evtID, const void* sender, Args... args)
     {
         auto recvers = _listeners[(int)evtID].find(sender);
         if (recvers == _listeners[(int)evtID].end())
@@ -78,30 +78,100 @@ public:
 
         const TEvent evt(std::forward<Args>(args)...);
 
-        std::cout << 3 << typeid(evt).name() << std::endl;
-
         for (auto& item : recvers->second)
         {
-            for (auto& cb : item.second)
+            for (auto& cbi : item.second)
             {
-                cb(evt);
+                cbi.cb(evt);
             }
         }
     }
-    
+
+
     template <typename C, typename ...Args>
-    void Register(EventID evtID, ObjectBase* sender, ObjectBase* recver, void (C::*f)(Args...))
+    std::size_t Register(EventID evtID, const void* sender, C* recver, void (C::*f)(Args...))
     {
         FnCallBack callBack = MakeCallBack(recver, f);
-        _listeners[(int)evtID][sender][recver].push_front(callBack);
+        const std::size_t id = NewID();
+        _listeners[(int)evtID][sender][recver].push_front(CallBackInfo{ std::move(callBack), id});
+        return id;
+    }
+
+
+    void Unregister(const void* ob)
+    {
+        for (auto& l : _listeners)
+        {
+            l.erase(ob);
+            for (auto& item : l)
+            {
+                item.second.erase(ob);
+            }
+        }
+    }
+
+    void Unregister(std::size_t id)
+    {
+        for (auto& l : _listeners)
+        {
+            for (auto& snd : l)
+            {
+                for (auto& rcv : snd.second)
+                {
+                    std::erase_if(rcv.second, [id](const CallBackInfo& cbi) { return cbi.id == id; });
+                }
+            }
+        }
     }
 
 private:
-    using FnCallBack = std::function<void(const EventBase& e)>;
+    template <typename C, typename... Args>
+    static auto MakeCallBack(C* obj, void (C::* f)(Args...))
+    {
+        using FnType = void (C::*)(Args... args);
+        return [f = std::forward<FnType>(f), obj](const EventBase& e)
+            {
+                if constexpr (sizeof...(Args) > 0)
+                {
+                    using TupleType = std::tuple<typename std::decay<Args>::type...>;
+                    const TupleType* eventBody = reinterpret_cast<const TupleType*>(e.Data());
+                    std::apply(std::bind_front(f, obj), *eventBody);
+                }
+                else
+                {
+                    std::invoke(f, obj);
+                }
+            };
+    }
 
-    std::array<std::map<ObjectBase*, std::map<ObjectBase*, std::forward_list<FnCallBack>>>, (int)EventID::Max> _listeners;
+    using FnCallBack = std::function<void(const EventBase& e)>;
+    
+    EventSystem() = default;
+
+    struct CallBackInfo
+    {
+        FnCallBack cb;
+        std::size_t id = 0;
+    };
+
+    std::size_t NewID()
+    {
+        return ++_id;
+    }
+
+private:
+    std::array<std::map<const void*, std::map<const void*, std::forward_list<CallBackInfo>>>, (int)EventID::Max> _listeners;
+    std::size_t _id = 0;
 };
 
+class ObjectBase
+{
+public:
+    virtual ~ObjectBase() 
+    {
+        EventSystem::Inst().Unregister(this);
+    }
+};
 
 
 class Svr : public ObjectBase
@@ -111,6 +181,11 @@ public:
     {
         std::cout << "read " << code << " " << b << std::endl;
     }
+
+    void OnVoid()
+    {
+        std::cout << "OnVoid" << std::endl;
+    }
 };
 
 int main()
@@ -119,11 +194,12 @@ int main()
     Svr r;
     
 
-    EventSystem es;
-    es.Register(EventID::NewJob, &s, &r, &Svr::OnReady);
+    EventSystem::Inst().Register(EventID::NewJob, &s, &r, &Svr::OnReady);
+    EventSystem::Inst().Register(EventID::OnVoid, &s, &r, &Svr::OnVoid);
 
-    const std::string b("abc");
-    es.Send(EventID::NewJob, &s, 1, b);
+    EventSystem::Inst().Send(EventID::NewJob, &s, 1, std::string("abc"));
+    EventSystem::Inst().Send(EventID::OnVoid, &s);
+
 
     return 0;
 }
