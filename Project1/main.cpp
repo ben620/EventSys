@@ -4,6 +4,7 @@
 #include <array>
 #include <functional>
 #include <tuple>
+#include <type_traits>
 #include <iostream>
 
 
@@ -76,7 +77,7 @@ public:
             return;
         }
 
-        const TEvent evt(std::forward<Args>(args)...);
+        const TEvent<std::add_lvalue_reference_t<std::add_const_t<std::decay_t<Args>>>...> evt(args...);
 
         for (auto& item : recvers->second)
         {
@@ -125,6 +126,9 @@ public:
     }
 
 private:
+
+    
+
     template <typename C, typename... Args>
     static auto MakeCallBack(C* obj, void (C::* f)(Args...))
     {
@@ -133,9 +137,10 @@ private:
             {
                 if constexpr (sizeof...(Args) > 0)
                 {
-                    using TupleType = std::tuple<typename std::decay<Args>::type...>;
+                    using TupleType = std::tuple<std::add_lvalue_reference_t<std::add_const_t<std::decay_t<Args>>>...>;
                     const TupleType* eventBody = reinterpret_cast<const TupleType*>(e.Data());
                     std::apply(std::bind_front(f, obj), *eventBody);
+             
                 }
                 else
                 {
