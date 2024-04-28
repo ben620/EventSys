@@ -4,52 +4,49 @@
 
 namespace es
 {
-
+    template <typename... Args>
+    struct TupleTypeFromArgs
+    {
+        using TupleType = std::tuple<std::add_lvalue_reference_t<std::add_const_t<std::decay_t<Args>>>...>;
+    };
     template<typename T>
-    struct function_traits;
+    struct FunctionTraits;
 
     template<typename ReturnType, typename... Args>
-    struct function_traits<ReturnType(Args...)>
+    struct FunctionTraits<ReturnType(Args...)>
     {
-        using tuple_type = std::tuple<std::add_lvalue_reference_t<std::add_const_t<std::decay_t<Args>>>...>;
+        using TupleType = typename TupleTypeFromArgs<Args...>::TupleType;
         static constexpr std::size_t arg_count = sizeof ...(Args);
     };
 
     template<typename ReturnType, typename... Args>
-    struct function_traits<ReturnType(*)(Args...)> : function_traits<ReturnType(Args...)> {};
+    struct FunctionTraits<ReturnType(*)(Args...)> : FunctionTraits<ReturnType(Args...)> {};
 
     template<typename ReturnType, typename... Args>
-    struct function_traits<std::function<ReturnType(Args...)>> : function_traits<ReturnType(Args...)> {};
+    struct FunctionTraits<std::function<ReturnType(Args...)>> : FunctionTraits<ReturnType(Args...)> {};
 
 #define FUNCTION_TRAITS(...)\
 template <typename ReturnType, typename ClassType, typename... Args>\
-struct function_traits<ReturnType(ClassType::*)(Args...) __VA_ARGS__> : function_traits<ReturnType(Args...)>{};\
+struct FunctionTraits<ReturnType(ClassType::*)(Args...) __VA_ARGS__> : FunctionTraits<ReturnType(Args...)>{};
 
     FUNCTION_TRAITS()
-        FUNCTION_TRAITS(const)
-        FUNCTION_TRAITS(volatile)
-        FUNCTION_TRAITS(const volatile)
-        FUNCTION_TRAITS(const&&)
+    FUNCTION_TRAITS(const)
+    FUNCTION_TRAITS(volatile)
+    FUNCTION_TRAITS(const volatile)
+    FUNCTION_TRAITS(const&&)
 #undef FUNCTION_TRAITS
 
-        template<typename Callable>
-    struct function_traits : function_traits<decltype(&Callable::operator())> {};
+    template<typename Callable>
+    struct FunctionTraits : FunctionTraits<decltype(&Callable::operator())> {};
 
     template <typename F>
     static auto MakeCBStorage(F&& f)
     {
         return [f = std::forward<F>(f)](const void* e)
             {
-                if constexpr (function_traits<F>::arg_count > 0)
-                {
-                    using TupleType = typename function_traits<F>::tuple_type;
-                    const TupleType* eventBody = reinterpret_cast<const TupleType*>(e);
-                    std::apply(f, *eventBody);
-                }
-                else
-                {
-                    f();
-                }
+                using TupleType = typename FunctionTraits<F>::TupleType;
+                const TupleType* eventBody = reinterpret_cast<const TupleType*>(e);
+                std::apply(f, *eventBody);
             };
     }
 
@@ -58,16 +55,9 @@ struct function_traits<ReturnType(ClassType::*)(Args...) __VA_ARGS__> : function
     {
         return [f = std::forward<F>(f), obj = const_cast<OBJ*>(obj)](const void* e)
             {
-                if constexpr (function_traits<F>::arg_count > 0)
-                {
-                    using TupleType = typename function_traits<F>::tuple_type;
-                    const TupleType* eventBody = reinterpret_cast<const TupleType*>(e);
-                    std::apply(std::bind_front(f, obj), *eventBody);
-                }
-                else
-                {
-                    std::invoke(f, obj);
-                }
+                using TupleType = typename FunctionTraits<F>::TupleType;
+                const TupleType* eventBody = reinterpret_cast<const TupleType*>(e);
+                std::apply(std::bind_front(f, obj), *eventBody);
             };
     }
 
@@ -88,14 +78,14 @@ struct function_traits<ReturnType(ClassType::*)(Args...) __VA_ARGS__> : function
         template <typename EventType, typename ...Args>
         void Send(EventType evtID, const void* sender, Args... args) const
         {
-            const std::tuple<std::add_lvalue_reference_t<std::add_const_t<std::decay_t<Args>>>...> evt(args...);
+            const typename TupleTypeFromArgs<Args...>::TupleType evt(std::forward<Args>(args)...);
             Call((int)evtID, sender, &evt);
         }
 
         template <typename EventType, typename ...Args>
         void SendAll(EventType evtID, Args... args) const
         {
-            const std::tuple<std::add_lvalue_reference_t<std::add_const_t<std::decay_t<Args>>>...> evt(args...);
+            const typename TupleTypeFromArgs<Args...>::TupleType evt(std::forward<Args>(args)...);
             Call((int)evtID, nullptr, &evt);
         }
 
