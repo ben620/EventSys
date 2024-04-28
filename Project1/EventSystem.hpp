@@ -1,5 +1,6 @@
 #pragma once
 #include <tuple>
+#include <cassert>
 #include <functional>
 
 namespace es
@@ -9,6 +10,23 @@ namespace es
     {
         using TupleType = std::tuple<std::add_lvalue_reference_t<std::add_const_t<std::decay_t<Args>>>...>;
     };
+
+    template <typename ...Args>
+    struct ArgumentStatistic
+    {
+        static constexpr uint32_t size = (uint32_t)(... + sizeof(std::decay_t<Args>));
+        static constexpr uint32_t pointerCount = (uint32_t)(... + std::is_pointer_v<std::decay_t<Args>>);
+        static constexpr uint32_t classCount = (uint32_t)(... + std::is_class_v<std::decay_t<Args>>);
+    };
+
+    template <>
+    struct ArgumentStatistic<>
+    {
+        static constexpr uint32_t size = 0;
+        static constexpr uint32_t pointerCount = 0;
+        static constexpr uint32_t classCount = 0;
+    };
+
     template<typename T>
     struct FunctionTraits;
 
@@ -16,7 +34,10 @@ namespace es
     struct FunctionTraits<ReturnType(Args...)>
     {
         using TupleType = typename TupleTypeFromArgs<Args...>::TupleType;
-        static constexpr std::size_t arg_count = sizeof ...(Args);
+        static constexpr uint32_t size = ArgumentStatistic<Args...>::size;
+        static constexpr uint32_t pointerCount = ArgumentStatistic<Args...>::pointerCount;
+        static constexpr uint32_t classCount = ArgumentStatistic<Args...>::classCount;
+        static constexpr uint32_t count = sizeof...(Args);
     };
 
     template<typename ReturnType, typename... Args>
@@ -38,31 +59,27 @@ struct FunctionTraits<ReturnType(ClassType::*)(Args...) __VA_ARGS__> : FunctionT
 
     template<typename Callable>
     struct FunctionTraits : FunctionTraits<decltype(&Callable::operator())> {};
-
-    template <typename F>
-    static auto MakeCBStorage(F&& f)
-    {
-        return [f = std::forward<F>(f)](const void* e)
-            {
-                using TupleType = typename FunctionTraits<F>::TupleType;
-                const TupleType* eventBody = reinterpret_cast<const TupleType*>(e);
-                std::apply(f, *eventBody);
-            };
-    }
-
-    template <typename OBJ, typename F>
-    static auto MakeCBStorage(const OBJ* obj, F&& f)
-    {
-        return [f = std::forward<F>(f), obj = const_cast<OBJ*>(obj)](const void* e)
-            {
-                using TupleType = typename FunctionTraits<F>::TupleType;
-                const TupleType* eventBody = reinterpret_cast<const TupleType*>(e);
-                std::apply(std::bind_front(f, obj), *eventBody);
-            };
-    }
+    
 
     class EventSystem
     {
+    public:
+        using CallBackHandle = uint32_t;
+        struct CallBackParam
+        {
+            const void* p = nullptr;
+            //ruff runtime checks
+            uint32_t paramCount = 0;
+            uint32_t paramSize = 0;
+            uint32_t pointerParamCount = 0;
+            uint32_t classCount = 0;
+
+            bool IsTypeValid(uint32_t count, uint32_t size, uint32_t pointer, uint32_t klass) const
+            {
+                return paramCount == count && paramSize == size && pointerParamCount == pointer && classCount == klass;
+            }
+        };
+
     public:
         static inline EventSystem& Inst()
         {
@@ -70,25 +87,41 @@ struct FunctionTraits<ReturnType(ClassType::*)(Args...) __VA_ARGS__> : FunctionT
             return es;
         }
 
-        EventSystem(const EventSystem&) = delete;
-        void operator=(const EventSystem&) = delete;
-
-        using CallBackHandle = uint32_t;
-
         template <typename EventType, typename ...Args>
         void Send(EventType evtID, const void* sender, Args... args) const
         {
             const typename TupleTypeFromArgs<Args...>::TupleType evt(std::forward<Args>(args)...);
-            Call((int)evtID, sender, &evt);
+            const EventSystem::CallBackParam cbp{ .p = &evt, 
+                .paramCount = sizeof...(Args), 
+                .paramSize = ArgumentStatistic<Args...>::size, 
+                .pointerParamCount = ArgumentStatistic<Args...>::pointerCount,
+                .classCount = ArgumentStatistic<Args...>::classCount
+            };
+            Call((int)evtID, sender, &cbp);
         }
 
         template <typename EventType, typename ...Args>
         void SendAll(EventType evtID, Args... args) const
         {
             const typename TupleTypeFromArgs<Args...>::TupleType evt(std::forward<Args>(args)...);
-            Call((int)evtID, nullptr, &evt);
+            const EventSystem::CallBackParam cbp{ .p = &evt,
+                .paramCount = sizeof...(Args),
+                .paramSize = ArgumentStatistic<Args...>::size,
+                .pointerParamCount = ArgumentStatistic<Args...>::pointerCount,
+                .classCount = ArgumentStatistic<Args...>::classCount
+            };
+            Call((int)evtID, nullptr, &cbp);
         }
 
+        /// <summary>
+        /// listen to object sender's sent event only
+        /// </summary>
+        /// <typeparam name="EventType">any enum</typeparam>
+        /// <typeparam name="F">any callerable</typeparam>
+        /// <param name="evtID">event id</param>
+        /// <param name="sender">the target object to listen to. pass nullptr is any object's event is wanted</param>
+        /// <param name="f">any non member function, callables</param>
+        /// <returns>return's the id of the registration</returns>
         template <typename EventType, typename F>
         CallBackHandle Register(EventType evtID, const void* sender, F&& f)
         {
@@ -96,28 +129,76 @@ struct FunctionTraits<ReturnType(ClassType::*)(Args...) __VA_ARGS__> : FunctionT
             return Reg((int)evtID, sender, nullptr, std::move(callBack));
         }
 
+        /// <summary>
+        /// listen to object sent event, with member function as callback
+        /// </summary>
         template <typename EventType, typename RC, typename F>
         CallBackHandle Register(EventType evtID, const void* sender, const RC* recver, F&& f)
         {
+            static_assert(std::is_class_v<RC>);
             FnCallBack cb = MakeCBStorage(recver, std::forward<F>(f));
             return Reg((int)evtID, sender, recver, std::move(cb));
         }
 
-
+        /// <summary>
+        /// unregister any event with sender or recver is obj
+        /// </summary>
         void Unregister(const void* ob);
+
+        /// <summary>
+        /// unregister any event with id which is return by Register
+        /// </summary>
+        /// <param name="id"></param>
         void Unregister(CallBackHandle id);
         void Clear();
 
     private:
         EventSystem();
 
-        using FnCallBack = std::function<void(const void*)>;
+        using FnCallBack = std::function<void(const CallBackParam*)>;
 
         CallBackHandle Reg(int evt, const void* sd, const void* rc, FnCallBack&& cb);
-        void Call(int evt, const void* sd, const void* args) const;
+        void Call(int evt, const void* sd, const EventSystem::CallBackParam* args) const;
+
+        template <typename F>
+        static auto MakeCBStorage(F&& f)
+        {
+            return [f = std::forward<F>(f)](const CallBackParam* p)
+                {
+                    using TupleType = typename FunctionTraits<F>::TupleType;
+                    const TupleType* eventBody = reinterpret_cast<const TupleType*>(p->p);
+                    const uint32_t paramCount = FunctionTraits<F>::count;
+                    const uint32_t paramSize = FunctionTraits<F>::size;
+                    const uint32_t pointerParamCount = FunctionTraits<F>::pointerCount;
+                    const uint32_t classParamCount = FunctionTraits<F>::classCount;
+
+                    assert(p->IsTypeValid(paramCount, paramSize, pointerParamCount, classParamCount));
+                    std::apply(f, *eventBody);
+                };
+        }
+
+        template <typename OBJ, typename F>
+        static auto MakeCBStorage(const OBJ* obj, F&& f)
+        {
+            return [f = std::forward<F>(f), obj = const_cast<OBJ*>(obj)](const CallBackParam* p)
+                {
+                    using TupleType = typename FunctionTraits<F>::TupleType;
+                    const TupleType* eventBody = reinterpret_cast<const TupleType*>(p->p);
+
+                    const uint32_t paramCount = FunctionTraits<F>::count;
+                    const uint32_t paramSize = FunctionTraits<F>::size;
+                    const uint32_t pointerParamCount = FunctionTraits<F>::pointerCount;
+                    const uint32_t classParamCount = FunctionTraits<F>::classCount;
+
+                    assert(p->IsTypeValid(paramCount, paramSize, pointerParamCount, classParamCount));
+                    std::apply(std::bind_front(f, obj), *eventBody);
+                };
+        }
 
     private:
         friend struct EventSystemImp;
+        EventSystem(const EventSystem&) = delete;
+        void operator=(const EventSystem&) = delete;
         struct EventSystemImp* _imp;
     };
 

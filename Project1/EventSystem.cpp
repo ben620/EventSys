@@ -66,7 +66,7 @@ namespace es
     }
 
     static void inline DoCall(std::map<const void*, std::map<const void*, std::forward_list<EventSystemImp::CallBackInfo>>>& listeners
-        , const void* sender, const void* args)
+        , const void* sender, const EventSystem::CallBackParam* args)
     {
         if (auto recvers = listeners.find(sender); recvers != listeners.end())
         {
@@ -80,7 +80,7 @@ namespace es
         }
     }
 
-    void EventSystem::Call(int evtID, const void* sender, const void* args) const
+    void EventSystem::Call(int evtID, const void* sender, const EventSystem::CallBackParam* args) const
     {
         auto evtPairs = _imp->_listeners.find(evtID);
         if (evtPairs == _imp->_listeners.end())
