@@ -33,29 +33,8 @@ FUNCTION_TRAITS(const&&)
 template<typename Callable>
 struct function_traits : function_traits<decltype(&Callable::operator())> {};
 
-//member function
-template <typename Obj, typename F> requires std::is_invocable_v<F>&& std::is_class_v<Obj>
-static auto MakeCallBack(const Obj* obj, F&& f)
-{
-    return [f = std::forward<F>(f), obj](const void* e)
-        {
-            if constexpr (function_traits<F>::arg_count > 0)
-            {
-                using TupleType = typename function_traits<F>::tuple_type;
-                const TupleType* eventBody = reinterpret_cast<const TupleType*>(e);
-                std::apply(std::bind_front(f, obj), *eventBody);
-            }
-            else
-            {
-                std::invoke(f, obj);
-            }
-        };
-}
-
-
-//free/static/lambda/std::Fuction
 template <typename F>
-static auto MakeCallBack(F&& f)
+static auto MakeCBStorage(F&& f)
 {
     return [f = std::forward<F>(f)](const void* e)
         {
@@ -72,7 +51,23 @@ static auto MakeCallBack(F&& f)
         };
 }
 
-
+template <typename OBJ, typename F>
+static auto MakeCBStorage(const OBJ* obj, F&& f)
+{
+    return [f = std::forward<F>(f), obj = const_cast<OBJ*>(obj)](const void* e)
+        {
+            if constexpr (function_traits<F>::arg_count > 0)
+            {
+                using TupleType = typename function_traits<F>::tuple_type;
+                const TupleType* eventBody = reinterpret_cast<const TupleType*>(e);
+                std::apply(std::bind_front(f, obj), *eventBody);
+            }
+            else
+            {
+                std::invoke(f, obj);
+            }
+        };
+}
 
 class EventSystem
 {
@@ -102,30 +97,18 @@ public:
         Call((int)evtID, nullptr, &evt);
     }
 
-    //template <typename EventType, typename F>
-    //CallBackHandle Register(EventType evtID, const void* sender, F&& f)
-    //{
-    //    FnCallBack callBack = MakeCallBack(f);
-    //    return Reg((int)evtID, sender, nullptr, std::move(callBack));
-    //}
+    template <typename EventType, typename F>
+    CallBackHandle Register(EventType evtID, const void* sender, F&& f)
+    {
+        FnCallBack callBack = MakeCBStorage(std::forward<F>(f));
+        return Reg((int)evtID, sender, nullptr, std::move(callBack));
+    }
 
     template <typename EventType, typename RC, typename F>
     CallBackHandle Register(EventType evtID, const void* sender, const RC* recver, F && f)
     {
-        FnCallBack callBack = [f = std::forward<F>(f), recver](const void* e)
-            {
-                if constexpr (function_traits<F>::arg_count > 0)
-                {
-                    using TupleType = typename function_traits<F>::tuple_type;
-                    const TupleType* eventBody = reinterpret_cast<const TupleType*>(e);
-                    std::apply(std::bind_front(f, (void *)recver), *eventBody);
-                }
-                else
-                {
-                    //std::invoke(f, const_cast<RC*>(recver));
-                }
-            };;
-        return Reg((int)evtID, sender, recver, std::move(callBack));
+        FnCallBack cb = MakeCBStorage(recver, std::forward<F>(f));
+        return Reg((int)evtID, sender, recver, std::move(cb));
     }
 
 
