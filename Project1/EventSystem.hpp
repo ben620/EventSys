@@ -81,7 +81,7 @@ struct FunctionTraits<ReturnType(ClassType::*)(Args...) __VA_ARGS__> : FunctionT
         };
 
     public:
-        static inline EventSystem& Inst()
+        static inline [[nodiscard]]EventSystem& Inst()
         {
             static EventSystem es;
             return es;
@@ -90,6 +90,7 @@ struct FunctionTraits<ReturnType(ClassType::*)(Args...) __VA_ARGS__> : FunctionT
         template <typename EventType, typename ...Args>
         void Send(EventType evtID, const void* sender, Args... args) const
         {
+            static_assert(std::is_convertible_v<EventType, int> || std::is_enum_v<EventType>);
             const typename TupleTypeFromArgs<Args...>::TupleType evt(std::forward<Args>(args)...);
             const EventSystem::CallBackParam cbp{ .p = &evt, 
                 .paramCount = sizeof...(Args), 
@@ -103,6 +104,7 @@ struct FunctionTraits<ReturnType(ClassType::*)(Args...) __VA_ARGS__> : FunctionT
         template <typename EventType, typename ...Args>
         void SendAll(EventType evtID, Args... args) const
         {
+            static_assert(std::is_convertible_v<EventType, int> || std::is_enum_v<EventType>);
             const typename TupleTypeFromArgs<Args...>::TupleType evt(std::forward<Args>(args)...);
             const EventSystem::CallBackParam cbp{ .p = &evt,
                 .paramCount = sizeof...(Args),
@@ -121,10 +123,11 @@ struct FunctionTraits<ReturnType(ClassType::*)(Args...) __VA_ARGS__> : FunctionT
         /// <param name="evtID">event id</param>
         /// <param name="sender">the target object to listen to. pass nullptr is any object's event is wanted</param>
         /// <param name="f">any non member function, callables</param>
-        /// <returns>return's the id of the registration</returns>
+        /// <returns>the id of the registration</returns>
         template <typename EventType, typename F>
         CallBackHandle Register(EventType evtID, const void* sender, F&& f)
         {
+            static_assert(std::is_convertible_v<EventType, int> || std::is_enum_v<EventType>);
             FnCallBack callBack = MakeCBStorage(std::forward<F>(f));
             return Reg((int)evtID, sender, nullptr, std::move(callBack));
         }
@@ -135,6 +138,7 @@ struct FunctionTraits<ReturnType(ClassType::*)(Args...) __VA_ARGS__> : FunctionT
         template <typename EventType, typename RC, typename F>
         CallBackHandle Register(EventType evtID, const void* sender, const RC* recver, F&& f)
         {
+            static_assert(std::is_convertible_v<EventType, int> || std::is_enum_v<EventType>);
             static_assert(std::is_class_v<RC>);
             FnCallBack cb = MakeCBStorage(recver, std::forward<F>(f));
             return Reg((int)evtID, sender, recver, std::move(cb));
@@ -202,7 +206,7 @@ struct FunctionTraits<ReturnType(ClassType::*)(Args...) __VA_ARGS__> : FunctionT
         struct EventSystemImp* _imp;
     };
 
-    static inline EventSystem& ESI()
+    static inline [[nodiscard]] EventSystem& ESI()
     {
         return EventSystem::Inst();
     }

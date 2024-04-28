@@ -83,6 +83,7 @@ int main()
     ESI().SendAll(EventID::OnNoSender);
     ESI().SendAll(EventID::OnLambda, 1);
     ESI().SendAll(EventID::OnStdFunction, 1);
+    const char *name = typeid(int).name();
 
     return 0;
 }
