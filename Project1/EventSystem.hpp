@@ -1,3 +1,5 @@
+//(C) benyuan 2024
+//all rights reserved
 #pragma once
 #include <tuple>
 #include <cassert>

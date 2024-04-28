@@ -1,3 +1,5 @@
+//(C) benyuan 2024
+//all rights reserved
 #include "EventSystem.hpp"
 #include <tuple>
 #include <map>
