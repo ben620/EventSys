@@ -61,7 +61,8 @@ static auto MakeCBStorage(F&& f)
 template <typename OBJ, typename F>
 static auto MakeCBStorage(const OBJ* obj, F&& f)
 {
-    return [f = std::forward<F>(f), obj](const void* e)
+    
+    return [f = std::forward<F>(f), obj = const_cast<OBJ*>(obj)](const void* e)
         {
             if constexpr (function_traits<F>::arg_count > 0)
             {
@@ -98,6 +99,7 @@ int main()
     cb(&param);
 
     auto cb1 = MakeCBStorage(&r, &Svr::OnVoid);
+    
     //EventSystem::Inst().Register(EventID::NewJob, &s, &r, &Svr::OnReady);
     //EventSystem::Inst().Register(EventID::OnVoid, &s, &r, &Svr::OnVoid);
     //EventSystem::Inst().Register(EventID::OnPointer, &s, &r, &Svr::OnPointer);
