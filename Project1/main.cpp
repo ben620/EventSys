@@ -27,7 +27,7 @@ public:
     {
         std::cout << "OnConstMethod" << std::endl;
     }
-
+    
     void OnNoSender() const
     {
         std::cout << "OnNoSender" << std::endl;
@@ -61,6 +61,7 @@ int main()
     
     
     EventSystem::Inst().Register(EventID::NewJob, &s, &r, &Svr::OnReady);
+    EventSystem::Inst().Register(EventID::NewJob, &s, &s, &Svr::OnReady);
     EventSystem::Inst().Register(EventID::OnVoid, &s, &r, &Svr::OnVoid);
     EventSystem::Inst().Register(EventID::OnPointer, &s, &r, &Svr::OnPointer);
     EventSystem::Inst().Register(EventID::OnConstMethod, &s, &r, &Svr::OnConstMethod);
