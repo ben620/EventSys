@@ -145,7 +145,7 @@ struct FunctionTraits<ReturnType(ClassType::*)(Args...) __VA_ARGS__> : FunctionT
         }
 
         /// <summary>
-        /// unregister any event with sender or recver is obj
+        /// unregister any event with sender or recver that is obj
         /// </summary>
         void Unregister(const void* ob);
 
