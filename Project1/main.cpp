@@ -56,6 +56,7 @@ int main()
         OnStaticMethod,
         OnNoSender,
         OnLambda,
+        OnStdFunction,
         Max
     };
     
@@ -68,8 +69,11 @@ int main()
     EventSystem::Inst().Register(EventID::OnStaticMethod, &s, &Svr::OnStaticMethod);
     EventSystem::Inst().Register(EventID::OnNoSender, nullptr, &r, &Svr::OnNoSender);
     EventSystem::Inst().Register(EventID::OnLambda, nullptr, [](int b) { std::cout << "OnLambda " << b << std::endl; });
+    EventSystem::Inst().Register(EventID::OnStdFunction, nullptr, std::function([](int b) { std::cout << "OnStdFunction " << b << std::endl; }));
 
     EventSystem::Inst().Send(EventID::NewJob, &s, 1, std::string("abc"));
+    std::cout << "change sender" << std::endl;
+    EventSystem::Inst().Send(EventID::NewJob, &r, 1, std::string("abc"));
     EventSystem::Inst().Send(EventID::OnVoid, &s);
     EventSystem::Inst().Send(EventID::OnPointer, &s, "pointer args");
     EventSystem::Inst().Send(EventID::OnConstMethod, &s);
@@ -77,6 +81,7 @@ int main()
     EventSystem::Inst().Send(EventID::OnNoSender, &s);
     EventSystem::Inst().SendAll(EventID::OnNoSender);
     EventSystem::Inst().SendAll(EventID::OnLambda, 1);
+    EventSystem::Inst().SendAll(EventID::OnStdFunction, 1);
 
     return 0;
 }
