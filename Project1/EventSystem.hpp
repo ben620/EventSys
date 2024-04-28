@@ -2,6 +2,78 @@
 #include <tuple>
 #include <functional>
 
+
+template<typename T>
+struct function_traits;
+
+template<typename ReturnType, typename... Args>
+struct function_traits<ReturnType(Args...)>
+{
+    using tuple_type = std::tuple<std::add_lvalue_reference_t<std::add_const_t<std::decay_t<Args>>>...>;
+    static constexpr std::size_t arg_count = sizeof ...(Args);
+};
+
+template<typename ReturnType, typename... Args>
+struct function_traits<ReturnType(*)(Args...)> : function_traits<ReturnType(Args...)> {};
+
+template<typename ReturnType, typename... Args>
+struct function_traits<std::function<ReturnType(Args...)>> : function_traits<ReturnType(Args...)> {};
+
+#define FUNCTION_TRAITS(...)\
+template <typename ReturnType, typename ClassType, typename... Args>\
+struct function_traits<ReturnType(ClassType::*)(Args...) __VA_ARGS__> : function_traits<ReturnType(Args...)>{};\
+
+FUNCTION_TRAITS()
+FUNCTION_TRAITS(const)
+FUNCTION_TRAITS(volatile)
+FUNCTION_TRAITS(const volatile)
+FUNCTION_TRAITS(const&&)
+#undef FUNCTION_TRAITS
+
+template<typename Callable>
+struct function_traits : function_traits<decltype(&Callable::operator())> {};
+
+//member function
+template <typename Obj, typename F> requires std::is_invocable_v<F>&& std::is_class_v<Obj>
+static auto MakeCallBack(const Obj* obj, F&& f)
+{
+    return [f = std::forward<F>(f), obj](const void* e)
+        {
+            if constexpr (function_traits<F>::arg_count > 0)
+            {
+                using TupleType = typename function_traits<F>::tuple_type;
+                const TupleType* eventBody = reinterpret_cast<const TupleType*>(e);
+                std::apply(std::bind_front(f, obj), *eventBody);
+            }
+            else
+            {
+                std::invoke(f, obj);
+            }
+        };
+}
+
+
+//free/static/lambda/std::Fuction
+template <typename F>
+static auto MakeCallBack(F&& f)
+{
+    return [f = std::forward<F>(f)](const void* e)
+        {
+            if constexpr (function_traits<F>::arg_count > 0)
+            {
+                using TupleType = typename function_traits<F>::tuple_type;
+                const TupleType* eventBody = reinterpret_cast<const TupleType*>(e);
+                std::apply(f, *eventBody);
+            }
+            else
+            {
+                f();
+            }
+        };
+}
+
+
+
 class EventSystem
 {
 public:
@@ -23,99 +95,45 @@ public:
         Call((int)evtID, sender, &evt);
     }
 
-    template <typename EventType, typename C, typename ...Args>
-    CallBackHandle Register(EventType evtID, const void* sender, C* recver, void (C::* f)(Args...))
-    {
-        FnCallBack callBack = MakeCallBack(recver, f);
-        return Reg((int)evtID, sender, recver, std::move(callBack));
-    }
-
-
-    template <typename EventType, typename C, typename ...Args>
-    CallBackHandle Register(EventType evtID, const void* sender, C* recver, void (C::* f)(Args...) const)
-    {
-        FnCallBack callBack = MakeCallBack(recver, f);
-        return Reg((int)evtID, sender, recver, std::move(callBack));
-    }
-
-    //static and free function as callback
     template <typename EventType, typename ...Args>
-    CallBackHandle Register(EventType evtID, const void* sender, void (*f)(Args...))
+    void SendAll(EventType evtID, Args... args) const
     {
-        FnCallBack callBack = MakeCallBack(f);
-        return Reg((int)evtID, sender, nullptr, std::move(callBack));
+        const std::tuple<std::add_lvalue_reference_t<std::add_const_t<std::decay_t<Args>>>...> evt(args...);
+        Call((int)evtID, nullptr, &evt);
     }
 
-    //listen to event regardless of sender, for method
-    template <typename EventType, typename C, typename ...Args>
-    CallBackHandle Register(EventType evtID, const C *recver, void (C::*f)(Args...))
+    //template <typename EventType, typename F>
+    //CallBackHandle Register(EventType evtID, const void* sender, F&& f)
+    //{
+    //    FnCallBack callBack = MakeCallBack(f);
+    //    return Reg((int)evtID, sender, nullptr, std::move(callBack));
+    //}
+
+    template <typename EventType, typename RC, typename F>
+    CallBackHandle Register(EventType evtID, const void* sender, const RC* recver, F && f)
     {
-        FnCallBack callBack = MakeCallBack(f);
-        return Reg((int)evtID, nullptr, recver, std::move(callBack));
+        FnCallBack callBack = [f = std::forward<F>(f), recver](const void* e)
+            {
+                if constexpr (function_traits<F>::arg_count > 0)
+                {
+                    using TupleType = typename function_traits<F>::tuple_type;
+                    const TupleType* eventBody = reinterpret_cast<const TupleType*>(e);
+                    std::apply(std::bind_front(f, (void *)recver), *eventBody);
+                }
+                else
+                {
+                    //std::invoke(f, const_cast<RC*>(recver));
+                }
+            };;
+        return Reg((int)evtID, sender, recver, std::move(callBack));
     }
+
 
     void Unregister(const void* ob);
     void Unregister(CallBackHandle id);
     void Clear();
 
 private:
-    template <typename C, typename... Args>
-    static auto MakeCallBack(C* obj, void (C::* f)(Args...))
-    {
-        using FnType = void (C::*)(Args... args);
-        return [f = std::forward<FnType>(f), obj](const void* e)
-            {
-                if constexpr (sizeof...(Args) > 0)
-                {
-                    using TupleType = std::tuple<std::add_lvalue_reference_t<std::add_const_t<std::decay_t<Args>>>...>;
-                    const TupleType* eventBody = reinterpret_cast<const TupleType*>(e);
-                    std::apply(std::bind_front(f, obj), *eventBody);
-                }
-                else
-                {
-                    std::invoke(f, obj);
-                }
-            };
-    }
-
-    template <typename C, typename... Args>
-    static auto MakeCallBack(const C* obj, void (C::* f)(Args...) const)
-    {
-        using FnType = void (C::*)(Args... args) const;
-        return [f = std::forward<FnType>(f), obj](const void* e)
-            {
-                if constexpr (sizeof...(Args) > 0)
-                {
-                    using TupleType = std::tuple<std::add_lvalue_reference_t<std::add_const_t<std::decay_t<Args>>>...>;
-                    const TupleType* eventBody = reinterpret_cast<const TupleType*>(e);
-                    std::apply(std::bind_front(f, obj), *eventBody);
-                }
-                else
-                {
-                    std::invoke(f, obj);
-                }
-            };
-    }
-
-    template <typename... Args>
-    static auto MakeCallBack(void (*f)(Args...))
-    {
-        using FnType = void (*)(Args...);
-        return [f = std::forward<FnType>(f)](const void* e)
-            {
-                if constexpr (sizeof...(Args) > 0)
-                {
-                    using TupleType = std::tuple<std::add_lvalue_reference_t<std::add_const_t<std::decay_t<Args>>>...>;
-                    const TupleType* eventBody = reinterpret_cast<const TupleType*>(e);
-                    std::apply(f, *eventBody);
-                }
-                else
-                {
-                    f();
-                }
-            };
-    }
-
     EventSystem();
 
     using FnCallBack = std::function<void(const void*)>;
